@@ -14,11 +14,11 @@ void write_colour(std::vector<int>& pixels, colour pixel_colour, int samples_per
 	auto g = pixel_colour.y();
 	auto b = pixel_colour.z();
 
-	// vals will be >1 since we are sampling multiple times per pixel, so we must scale them back down to [0,1]
+	// scale colour values to [0,1] and gamma-correct for gamma=2
 	auto scale = 1.0 / samples_per_pixel;
-	r *= scale;
-	g *= scale;
-	b *= scale;
+	r = sqrt(scale * r);
+	g = sqrt(scale * g);
+	b = sqrt(scale * b);
 
 	pixels.push_back(static_cast<int>(256 * clamp(r, 0.0, 0.999)));
 	pixels.push_back(static_cast<int>(256 * clamp(g, 0.0, 0.999)));
