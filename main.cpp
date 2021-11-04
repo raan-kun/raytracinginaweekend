@@ -20,7 +20,9 @@ colour ray_colour(const ray& r, const hittable& world, int depth)
 		return colour(0, 0, 0);
 
 	if (world.hit(r, 0.001, infinity, rec)) {
-		point3 target = rec.p + rec.normal + random_in_unit_sphere();
+		//point3 target = rec.p + rec.normal + random_unit_vector(); // cos3() distribution
+		//point3 target = rec.p + rec.normal + random_in_unit_sphere(); // approximate lambertian diffuse
+		point3 target = rec.p + random_in_hemisphere(rec.normal); // true lambertian diffuse
 		return 0.5 * ray_colour(ray(rec.p, target - rec.p), world, depth - 1);
 	}
 
