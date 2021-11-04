@@ -33,7 +33,7 @@ int main()
 	const long long upscale_factor = 4;
 	const long long image_width = 400;
 	const long long image_height = static_cast<int>(image_width/aspect_ratio);
-	const long long samples_per_pixel = 1;
+	const long long samples_per_pixel = 100;
 
 	// image io
 	std::ofstream file_out;
@@ -55,8 +55,8 @@ int main()
 			colour pix(0, 0, 0);
 			for (int s = 0; s < samples_per_pixel; ++s) {
 				// normalise i and j & sample random point within this pixel
-				auto u = (double(i)) / (image_width - 1);
-				auto v = (double(j)) / (image_height - 1);
+				auto u = (double(i) + random_double()) / (image_width - 1);
+				auto v = (double(j) + random_double()) / (image_height - 1);
 				// make ray for this pixel
 				ray r = cam.get_ray(u, v);
 				// render ray
