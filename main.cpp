@@ -3,6 +3,7 @@
 #include "colour.h"
 #include "sphere.h"
 #include "camera.h"
+#include "material.h"
 #include "hittable_list.h"
 
 #include <vector>
@@ -20,10 +21,14 @@ colour ray_colour(const ray& r, const hittable& world, int depth)
 		return colour(0, 0, 0);
 
 	if (world.hit(r, 0.001, infinity, rec)) {
+		ray scattered;
+		colour attenuation;
+		if (rec.mat_ptr->scatter(r, rec, attenuation, scattered))
+			return attenuation * ray_colour(scattered, world, depth - 1);
 		//point3 target = rec.p + rec.normal + random_unit_vector(); // cos3() distribution
 		//point3 target = rec.p + rec.normal + random_in_unit_sphere(); // approximate lambertian diffuse
 		point3 target = rec.p + random_in_hemisphere(rec.normal); // true lambertian diffuse
-		return 0.5 * ray_colour(ray(rec.p, target - rec.p), world, depth - 1);
+		return colour(0, 0, 0);
 	}
 
 	// scale direction to unit length (-1.0 < y < 1.0)
@@ -50,8 +55,16 @@ int main()
 
 	// world
 	hittable_list world;
-	world.add(make_shared<sphere>(point3(0, 0, -1), 0.5));
-	world.add(make_shared<sphere>(point3(0, -100.5, -1), 100));
+
+	auto mat_ground = make_shared<lambertian>(colour(0.8, 0.8, 0.0));
+	auto mat_center = make_shared<lambertian>(colour(0.7, 0.3, 0.3));
+	auto mat_left   = make_shared<metal>(colour(0.8, 0.8, 0.8), 0.3);
+	auto mat_right  = make_shared<metal>(colour(0.8, 0.6, 0.2), 1.0);
+
+	world.add(make_shared<sphere>(point3( 0.0, -100.5, -1.0), 100.0, mat_ground));
+	world.add(make_shared<sphere>(point3( 0.0,    0.0, -1.0),   0.5, mat_center));
+	world.add(make_shared<sphere>(point3(-1.0,    0.0, -1.0),   0.5, mat_left));
+	world.add(make_shared<sphere>(point3( 1.0,    0.0, -1.0),   0.5, mat_right));
 
 	// camera
 	camera cam;
