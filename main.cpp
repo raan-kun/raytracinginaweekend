@@ -67,8 +67,14 @@ int main()
 	world.add(make_shared<sphere>(point3(-1.0,    0.0, -1.0),  -0.4, mat_left));
 	world.add(make_shared<sphere>(point3( 1.0,    0.0, -1.0),   0.5, mat_right));
 
+	//auto R = cos(pi / 4);
+	//auto mat_left = make_shared<lambertian>(colour(0, 0, 1));
+	//auto mat_right = make_shared<lambertian>(colour(1, 0, 0));
+	//world.add(make_shared<sphere>(point3(-R, 0, -1), R, mat_left));
+	//world.add(make_shared<sphere>(point3( R, 0, -1), R, mat_right));
+
 	// camera
-	camera cam;
+	camera cam(point3(-4,2,2), point3(0,0,-1), vec3(0,1,0), 20, aspect_ratio);
 
 	// render
 	auto tp1 = std::chrono::high_resolution_clock::now();
