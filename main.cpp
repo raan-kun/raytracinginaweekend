@@ -26,8 +26,8 @@ colour ray_colour(const ray& r, const hittable& world, int depth)
 		if (rec.mat_ptr->scatter(r, rec, attenuation, scattered))
 			return attenuation * ray_colour(scattered, world, depth - 1);
 		//point3 target = rec.p + rec.normal + random_unit_vector(); // cos3() distribution
-		//point3 target = rec.p + rec.normal + random_in_unit_sphere(); // approximate lambertian diffuse
-		point3 target = rec.p + random_in_hemisphere(rec.normal); // true lambertian diffuse
+		//point3 target = rec.p + rec.normal + random_in_unit_sphere(); // true lambertian diffuse
+		point3 target = rec.p + random_in_hemisphere(rec.normal); // hemispherical scattering
 		return colour(0, 0, 0);
 	}
 
@@ -46,7 +46,7 @@ int main()
 	const long long image_width = 400;
 	const long long image_height = static_cast<int>(image_width/aspect_ratio);
 	const long long upscale_factor = 1;
-	const long long samples_per_pixel = 100;
+	const long long samples_per_pixel = 50;
 	const int max_depth = 50;
 
 	// image internal storage
@@ -67,14 +67,13 @@ int main()
 	world.add(make_shared<sphere>(point3(-1.0,    0.0, -1.0),  -0.4, mat_left));
 	world.add(make_shared<sphere>(point3( 1.0,    0.0, -1.0),   0.5, mat_right));
 
-	//auto R = cos(pi / 4);
-	//auto mat_left = make_shared<lambertian>(colour(0, 0, 1));
-	//auto mat_right = make_shared<lambertian>(colour(1, 0, 0));
-	//world.add(make_shared<sphere>(point3(-R, 0, -1), R, mat_left));
-	//world.add(make_shared<sphere>(point3( R, 0, -1), R, mat_right));
-
 	// camera
-	camera cam(point3(-4,2,2), point3(0,0,-1), vec3(0,1,0), 20, aspect_ratio);
+	point3 lookfrom(0, 1, 5);
+	point3 lookat(0, 0, -1);
+	vec3 vup(0, 1, 0);
+	auto dist_to_focus = (lookfrom - lookat).length();
+	auto aperture = 0.8;
+	camera cam(lookfrom, lookat, vup, 20, aspect_ratio, aperture, dist_to_focus);
 
 	// render
 	auto tp1 = std::chrono::high_resolution_clock::now();
