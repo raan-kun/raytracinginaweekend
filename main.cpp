@@ -148,7 +148,7 @@ int main()
 	point3 lookat(0, 0, 0);
 	vec3 vup(0, 1, 0);
 	auto dist_to_focus = 10.0;
-	auto aperture = 0.5;
+	auto aperture = 0.2;
 	camera cam(lookfrom, lookat, vup, 20, aspect_ratio, aperture, dist_to_focus);
 
 	// thread setup
