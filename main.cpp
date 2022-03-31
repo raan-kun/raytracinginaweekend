@@ -16,16 +16,19 @@
 
 // options
 const auto aspect_ratio = 16.0 / 9.0;
-const long long image_width = 400;
+const long long image_width = 1280;
 const long long image_height = static_cast<int>(image_width/aspect_ratio);
 const long long upscale_factor = 1;
-const long long samples_per_pixel = 50;
-const int max_depth = 5;
+const long long samples_per_pixel = 32;
+const int max_depth = 8;
 
 // internal image buffer
-std::vector<int> image_buffer;
+std::vector<int> image_buffer(image_width * image_height * 3);
 // mutex lock for image buffer
 std::mutex buffer_mutex;
+
+// for output
+auto lines_remaining = image_height;
 
 colour ray_colour(const ray& r, const hittable& world, int depth)
 {
@@ -100,36 +103,38 @@ hittable_list random_scene()
     return world;
 }
 
-// render one row, to be called per-thread
-void calculate_row(int row, camera& cam, hittable_list& world)
+// render lines from start to end, runs per-thread
+void render_lines(int start, int end, camera& cam, hittable_list& world)
 {
-	// allocate space for 1 row of pixels
-	std::vector<int> row_buf;
-	row_buf.reserve(3 * image_width);
+	// allocate space for pixels this thread will render
+	long long n_rows = (long long)end - (long long)start;
+	std::vector<int> local_buf;
+	local_buf.reserve(n_rows * image_width * 3);
 
-	for (int i = 0; i < image_width; ++i) {
-		colour pix(0, 0, 0);
-		for (int s = 0; s < samples_per_pixel; ++s) {
-			// normalise i and j & sample random point within this pixel
-			auto u = (double(i) + random_double()) / (image_width - 1);
-			auto v = (double(row) + random_double()) / (image_height - 1);
-			// make ray for this pixel
-			ray r = cam.get_ray(u, v);
-			// render ray
-			pix += ray_colour(r, world, max_depth);
+	for (int j = start; j < end; ++j) {
+		for (int i = 0; i < image_width; ++i) {
+			colour pix(0, 0, 0);
+			for (int s = 0; s < samples_per_pixel; ++s) {
+				// normalise i and j & sample random point within this pixel
+				auto u = (i + random_double()) / (image_width - 1);
+				auto v = (j + random_double()) / (image_height - 1);
+				// make ray for this pixel
+				ray r = cam.get_ray(u, v);
+				// render ray
+				pix += ray_colour(r, world, max_depth);
+			}
+			write_colour(local_buf, pix, samples_per_pixel);
 		}
-		write_colour(row_buf, pix, samples_per_pixel);
 	}
-
 	// write to image buffer, wait if another thread is writing
 	buffer_mutex.lock();
 	int i = 0;
-	for (auto val : row_buf) {
-		//std::cout << val << ' ' << std::endl;
-		image_buffer[(long long)row*3ll*image_width + i] = val;
+	for (auto val : local_buf) {
+		image_buffer[(long long)start*3ll*image_width + i] = val;
 		i++;
 	}
-	//std::cout << std::endl;
+	lines_remaining -= n_rows;
+	std::cerr << "Lines remaining: " << lines_remaining << std::endl;
 	buffer_mutex.unlock();
 }
 
@@ -142,32 +147,31 @@ int main()
 	point3 lookfrom(13, 2, 3);
 	point3 lookat(0, 0, 0);
 	vec3 vup(0, 1, 0);
-	auto dist_to_focus = (lookfrom - lookat).length();
-	//auto dist_to_focus = 15.0;
-	auto aperture = 0.1;
+	auto dist_to_focus = 10.0;
+	auto aperture = 0.5;
 	camera cam(lookfrom, lookat, vup, 20, aspect_ratio, aperture, dist_to_focus);
 
-	// initialise image buffer
-	image_buffer.reserve(3 * image_width * upscale_factor * image_height * upscale_factor);
-
 	// thread setup
+	unsigned int n_threads = std::thread::hardware_concurrency();
+	std::cerr << "Using " << n_threads << " threads" << std::endl;
 	std::vector<std::thread> threads;
-	unsigned int n_threads = image_height; // just using 1 thread for 1 image row
 
-	// render
+	// launch threads!
+	std::cerr << "Start render!\n" << std::endl;
+	std::cerr << "Lines remaining: " << lines_remaining << std::endl;
 	auto tp1 = std::chrono::high_resolution_clock::now();
-	//std::thread th(calculate_row, 150, std::ref(cam), std::ref(world));
-	//th.join();
 	for (unsigned int i = 0; i < n_threads; ++i) {
-		threads.push_back(std::thread(calculate_row, i, std::ref(cam), std::ref(world)));
+		threads.push_back(std::thread(render_lines, i * image_height / n_threads, (i + 1ll) * image_height / n_threads, std::ref(cam), std::ref(world)));
 	}
 	for (std::thread& th : threads) {
 		th.join();
 	}
 	auto tp2 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> time_render = tp2 - tp1;
+	std::cerr << "Render finished" << std::endl;
 
 	// build output string, this is where image scaling is applied if needed
+	std::cerr << "Writing to file...";
 	std::ostringstream pixel_string;
 	auto tp3 = std::chrono::high_resolution_clock::now();
 	for (long long j = image_height - 1; j >= 0; --j) {
@@ -191,7 +195,7 @@ int main()
 	file_out.open("out.ppm");
 	file_out << "P3\n" << image_width*upscale_factor << ' ' << image_height*upscale_factor << "\n255" << std::endl;
 	file_out << pixel_string.str();
-	std::cerr << "\nDone" << "\n\n" << std::endl;
+	std::cerr << "\nDone!" << "\n\n" << std::endl;
 	file_out.close();
 	auto tp6 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> time_file_write = tp6 - tp5;
