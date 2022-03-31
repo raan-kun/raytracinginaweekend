@@ -23,9 +23,9 @@ public:
 	virtual bool scatter(const ray& r_in, const hit_record& rec, colour& attenuation, ray& scattered) const override
 	{
 		// scatter rays in random directions
-		auto scatter_direction = rec.normal + random_unit_vector(); // cos3 distribution
+		//auto scatter_direction = rec.normal + random_unit_vector(); // cos3 distribution
 		//auto scatter_direction = rec.normal + random_in_unit_sphere(); // approximate lambertian diffuse
-		//auto scatter_direction = random_in_hemisphere(rec.normal); // true lambertian diffuse
+		auto scatter_direction = random_in_hemisphere(rec.normal); // true lambertian diffuse
 
 		// catch degenerated scatter direction
 		if (scatter_direction.near_zero())
@@ -54,12 +54,12 @@ public:
 	}
 };
 
-class dialectric : public material
+class dielectric : public material
 {
 public:
 	double ri; // refractive index
 public:
-	dialectric(double refractive_index) : ri(refractive_index) {}
+	dielectric(double refractive_index) : ri(refractive_index) {}
 
 	virtual bool scatter(const ray& r_in, const hit_record& rec, colour& attenuation, ray& scattered) const override
 	{

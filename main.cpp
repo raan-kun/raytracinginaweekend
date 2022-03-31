@@ -6,11 +6,26 @@
 #include "material.h"
 #include "hittable_list.h"
 
+#include <mutex>
+#include <thread>
 #include <vector>
 #include <chrono>
 #include <sstream>
 #include <fstream>
 #include <iostream>
+
+// options
+const auto aspect_ratio = 16.0 / 9.0;
+const long long image_width = 400;
+const long long image_height = static_cast<int>(image_width/aspect_ratio);
+const long long upscale_factor = 1;
+const long long samples_per_pixel = 50;
+const int max_depth = 5;
+
+// internal image buffer
+std::vector<int> image_buffer;
+// mutex lock for image buffer
+std::mutex buffer_mutex;
 
 colour ray_colour(const ray& r, const hittable& world, int depth)
 {
@@ -25,12 +40,11 @@ colour ray_colour(const ray& r, const hittable& world, int depth)
 		colour attenuation;
 		if (rec.mat_ptr->scatter(r, rec, attenuation, scattered))
 			return attenuation * ray_colour(scattered, world, depth - 1);
-		//point3 target = rec.p + rec.normal + random_unit_vector(); // cos3() distribution
-		//point3 target = rec.p + rec.normal + random_in_unit_sphere(); // true lambertian diffuse
-		point3 target = rec.p + random_in_hemisphere(rec.normal); // hemispherical scattering
+
 		return colour(0, 0, 0);
 	}
 
+	// sky
 	// scale direction to unit length (-1.0 < y < 1.0)
 	vec3 unit_direction = unit_vector(r.direction()); 
 	// t = y component of unit_dir scaled to 0.0 <= t <= 1.0
@@ -39,74 +53,130 @@ colour ray_colour(const ray& r, const hittable& world, int depth)
 	return (1.0 - t) * colour(1.0, 1.0, 1.0) + t * colour(0.5, 0.7, 1.0); 
 }
 
-int main()
+hittable_list random_scene()
 {
-	// options
-	const auto aspect_ratio = 16.0 / 9.0;
-	const long long image_width = 400;
-	const long long image_height = static_cast<int>(image_width/aspect_ratio);
-	const long long upscale_factor = 1;
-	const long long samples_per_pixel = 50;
-	const int max_depth = 50;
-
-	// image internal storage
-	std::vector<int> pixel_array;
-	pixel_array.reserve(3 * image_width * upscale_factor * image_height * upscale_factor);
-
-	// world
 	hittable_list world;
 
-	auto mat_ground = make_shared<lambertian>(colour(0.8, 0.8, 0.0));
-	auto mat_center = make_shared<lambertian>(colour(0.1, 0.2, 0.5));
-	auto mat_left   = make_shared<dialectric>(1.5);
-	auto mat_right  = make_shared<metal>(colour(0.8, 0.6, 0.2), 0.0);
+    auto ground_material = make_shared<lambertian>(colour(0.5, 0.5, 0.5));
+    world.add(make_shared<sphere>(point3(0,-1000,0), 1000, ground_material));
 
-	world.add(make_shared<sphere>(point3( 0.0, -100.5, -1.0), 100.0, mat_ground));
-	world.add(make_shared<sphere>(point3( 0.0,    0.0, -1.0),   0.5, mat_center));
-	world.add(make_shared<sphere>(point3(-1.0,    0.0, -1.0),   0.5, mat_left));
-	world.add(make_shared<sphere>(point3(-1.0,    0.0, -1.0),  -0.4, mat_left));
-	world.add(make_shared<sphere>(point3( 1.0,    0.0, -1.0),   0.5, mat_right));
+    for (int a = -11; a < 11; a++) {
+        for (int b = -11; b < 11; b++) {
+            auto choose_mat = random_double();
+            point3 center(a + 0.9*random_double(), 0.2, b + 0.9*random_double());
+
+            if ((center - point3(4, 0.2, 0)).length() > 0.9) {
+                shared_ptr<material> sphere_material;
+
+                if (choose_mat < 0.8) {
+                    // diffuse
+                    auto albedo = colour::random() * colour::random();
+                    sphere_material = make_shared<lambertian>(albedo);
+                    world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                } else if (choose_mat < 0.95) {
+                    // metal
+                    auto albedo = colour::random(0.5, 1);
+                    auto fuzz = random_double(0, 0.5);
+                    sphere_material = make_shared<metal>(albedo, fuzz);
+                    world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                } else {
+                    // glass
+                    sphere_material = make_shared<dielectric>(1.5);
+                    world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                }
+            }
+        }
+    }
+
+	auto material1 = make_shared<dielectric>(1.5);
+    world.add(make_shared<sphere>(point3(0, 1, 0), 1.0, material1));
+
+    auto material2 = make_shared<lambertian>(colour(0.4, 0.2, 0.1));
+    world.add(make_shared<sphere>(point3(-4, 1, 0), 1.0, material2));
+
+    auto material3 = make_shared<metal>(colour(0.7, 0.6, 0.5), 0.0);
+    world.add(make_shared<sphere>(point3(4, 1, 0), 1.0, material3));
+
+    return world;
+}
+
+// render one row, to be called per-thread
+void calculate_row(int row, camera& cam, hittable_list& world)
+{
+	// allocate space for 1 row of pixels
+	std::vector<int> row_buf;
+	row_buf.reserve(3 * image_width);
+
+	for (int i = 0; i < image_width; ++i) {
+		colour pix(0, 0, 0);
+		for (int s = 0; s < samples_per_pixel; ++s) {
+			// normalise i and j & sample random point within this pixel
+			auto u = (double(i) + random_double()) / (image_width - 1);
+			auto v = (double(row) + random_double()) / (image_height - 1);
+			// make ray for this pixel
+			ray r = cam.get_ray(u, v);
+			// render ray
+			pix += ray_colour(r, world, max_depth);
+		}
+		write_colour(row_buf, pix, samples_per_pixel);
+	}
+
+	// write to image buffer, wait if another thread is writing
+	buffer_mutex.lock();
+	int i = 0;
+	for (auto val : row_buf) {
+		//std::cout << val << ' ' << std::endl;
+		image_buffer[(long long)row*3ll*image_width + i] = val;
+		i++;
+	}
+	//std::cout << std::endl;
+	buffer_mutex.unlock();
+}
+
+int main()
+{
+	// world
+	hittable_list world = random_scene();
 
 	// camera
-	point3 lookfrom(0, 1, 5);
-	point3 lookat(0, 0, -1);
+	point3 lookfrom(13, 2, 3);
+	point3 lookat(0, 0, 0);
 	vec3 vup(0, 1, 0);
 	auto dist_to_focus = (lookfrom - lookat).length();
-	auto aperture = 0.8;
+	//auto dist_to_focus = 15.0;
+	auto aperture = 0.1;
 	camera cam(lookfrom, lookat, vup, 20, aspect_ratio, aperture, dist_to_focus);
+
+	// initialise image buffer
+	image_buffer.reserve(3 * image_width * upscale_factor * image_height * upscale_factor);
+
+	// thread setup
+	std::vector<std::thread> threads;
+	unsigned int n_threads = image_height; // just using 1 thread for 1 image row
 
 	// render
 	auto tp1 = std::chrono::high_resolution_clock::now();
-	for (int j = image_height - 1; j >= 0; --j) {
-		std::stringstream line;
-		std::cerr << "\rScanlines remaining: " << j << ' ' << std::flush;
-		for (int i = 0; i < image_width; ++i) {
-			colour pix(0, 0, 0);
-			for (int s = 0; s < samples_per_pixel; ++s) {
-				// normalise i and j & sample random point within this pixel
-				auto u = (double(i) + random_double()) / (image_width - 1);
-				auto v = (double(j) + random_double()) / (image_height - 1);
-				// make ray for this pixel
-				ray r = cam.get_ray(u, v);
-				// render ray
-				pix += ray_colour(r, world, max_depth);
-			}
-			write_colour(pixel_array, pix, samples_per_pixel);
-		}
+	//std::thread th(calculate_row, 150, std::ref(cam), std::ref(world));
+	//th.join();
+	for (unsigned int i = 0; i < n_threads; ++i) {
+		threads.push_back(std::thread(calculate_row, i, std::ref(cam), std::ref(world)));
+	}
+	for (std::thread& th : threads) {
+		th.join();
 	}
 	auto tp2 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> time_render = tp2 - tp1;
 
-	// write to file
+	// build output string, this is where image scaling is applied if needed
 	std::ostringstream pixel_string;
 	auto tp3 = std::chrono::high_resolution_clock::now();
-	for (long long j = 0; j < image_height; ++j) {
+	for (long long j = image_height - 1; j >= 0; --j) {
 		std::ostringstream line;
 		for (long long i = 0; i < image_width; ++i) {
 			for (int u = 0; u < upscale_factor; u++) {
-				line << pixel_array[image_width * j * 3 + i * 3] << ' ';
-				line << pixel_array[image_width * j * 3 + i * 3 + 1] << ' ';
-				line << pixel_array[image_width * j * 3 + i * 3 + 2] << '\n';
+				line << image_buffer[image_width * j * 3 + i * 3] << ' ';
+				line << image_buffer[image_width * j * 3 + i * 3 + 1] << ' ';
+				line << image_buffer[image_width * j * 3 + i * 3 + 2] << '\n';
 			}
 		}
 		for(int u = 0; u < upscale_factor; u++)
@@ -115,6 +185,7 @@ int main()
 	auto tp4 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> time_string_convert = tp4 - tp3;
 
+	// write the file
 	auto tp5 = std::chrono::high_resolution_clock::now();
 	std::ofstream file_out;
 	file_out.open("out.ppm");
@@ -125,6 +196,7 @@ int main()
 	auto tp6 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> time_file_write = tp6 - tp5;
 
+	// output metrics
 	std::cerr << "Render time: " << time_render.count() << 's' << std::endl;
 	std::cerr << "String conversion time: " << time_string_convert.count() << 's' << std::endl;
 	std::cerr << "File write time: " << time_file_write.count() << 's' << std::endl;
